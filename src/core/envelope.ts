@@ -38,6 +38,8 @@ export interface Envelope {
   updatedAt: string
   /** Monotonic write counter used for compare-and-swap saves (see storage.ts). Missing = 0. */
   rev?: number
+  /** Random id of this vault, fixed at creation (missing on vaults made before it existed). */
+  vid?: string
 }
 
 const isBox = (b: unknown): b is Box => !!b && typeof (b as Box).iv === 'string' && typeof (b as Box).ct === 'string'
@@ -54,7 +56,8 @@ export function isEnvelope(x: unknown): x is Envelope {
     e.keys.passkeys.length <= 20 &&
     e.keys.passkeys.every((p) => typeof p?.credId === 'string' && typeof p.prfSalt === 'string' && isBox(p.box)) &&
     isBox(e.data) &&
-    (e.rev === undefined || (Number.isInteger(e.rev) && e.rev >= 0))
+    (e.rev === undefined || (Number.isSafeInteger(e.rev) && e.rev >= 0 && e.rev < Number.MAX_SAFE_INTEGER - 1_000_000)) &&
+    (e.vid === undefined || (typeof e.vid === 'string' && e.vid.length <= 64))
   )
 }
 
@@ -78,7 +81,7 @@ export async function createEnvelope(
   const dek = await unwrapDek(password, kek, AAD.dekPassword, false)
   const data = await encryptJson(dek, state)
   return {
-    env: { app: 'myrm', format: 1, kdf, keys: { password, passkeys: [] }, data, updatedAt: new Date().toISOString(), rev: 0 },
+    env: { app: 'myrm', format: 1, kdf, keys: { password, passkeys: [] }, data, updatedAt: new Date().toISOString(), rev: 0, vid: crypto.randomUUID() },
     dek,
   }
 }

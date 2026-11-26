@@ -19,7 +19,6 @@ import {
   openWithPrf,
   parseBackup,
   removePasskeyWrap,
-  resealLatest,
   writeState,
 } from './envelope'
 import { assertPrf, registerPrfPasskey } from './passkey'
@@ -102,6 +101,9 @@ export function VaultProvider({ children }: { children: ReactNode }) {
   const lastActivity = useRef(Date.now())
   const hiddenAt = useRef<number | null>(null)
   const channel = useRef<BroadcastChannel | null>(null)
+  /** While the data key rotates, edits are held here and applied to the re-keyed state afterwards. */
+  const rotating = useRef(false)
+  const heldUpdates = useRef<((s: AppState) => AppState)[]>([])
 
   const setEnvBoth = (e: Envelope | null) => {
     envRef.current = e
@@ -164,7 +166,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     }
     const sess = sessionRef.current
     const s = stateRef.current
-    if (!dirty.current || !sess || !s) return queue.current.then(() => undefined)
+    if (rotating.current || !dirty.current || !sess || !s) return queue.current.then(() => undefined)
     dirty.current = false
     return persistSnapshot({ dek: sess.dek, state: s }).catch((e) => {
       if (sessionRef.current?.gen === sess.gen) dirty.current = true // keep it dirty for the next attempt
@@ -176,6 +178,11 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     (fn: (s: AppState) => AppState) => {
       const cur = stateRef.current
       if (!cur || !sessionRef.current) return
+      if (rotating.current) {
+        // Never snapshot old-key state while the key is being replaced; replay after the commit.
+        heldUpdates.current.push(fn)
+        return
+      }
       const next = fn(cur)
       stateRef.current = next
       setState(next)
@@ -198,7 +205,8 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     setNotice(null)
     setSaveError(null)
     lastActivity.current = Date.now()
-    hiddenAt.current = null
+    // If the app went to the background while unlocking, the background deadline starts now.
+    hiddenAt.current = typeof document !== 'undefined' && document.visibilityState === 'hidden' ? Date.now() : null
     setStatus('unlocked')
     channel.current?.postMessage({ type: 'unlocked', from: TAB_ID })
     setPersisted(await requestPersistence())
@@ -213,6 +221,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     sessionRef.current = null
     stateRef.current = null
     dirty.current = false
+    heldUpdates.current = []
     if (saveTimer.current) clearTimeout(saveTimer.current)
     saveTimer.current = null
     setState(null)
@@ -311,23 +320,32 @@ export function VaultProvider({ children }: { children: ReactNode }) {
           const cur = envRef.current
           const start = stateRef.current
           if (gen !== genRef.current || !sess || !cur || !start) throw new SessionEndedError()
-          const rotated = await changePassphraseRotate(cur, start, oldPass, newPass)
-          if (gen !== genRef.current) throw new SessionEndedError()
-          let finalState = rotated.state
-          let finalEnv = rotated.env
-          // Edits made while Argon2 ran still carry old-key Sealed values: re-seal the latest state.
-          if (stateRef.current !== start && stateRef.current) {
-            finalState = await resealLatest(stateRef.current, sess.dek, rotated.dek)
-            finalEnv = await writeState({ ...rotated.env, rev: revOf(cur) }, rotated.dek, finalState)
+          rotating.current = true // from here no snapshot of old-key state can be captured or saved
+          try {
+            const rotated = await changePassphraseRotate(cur, start, oldPass, newPass)
+            if (gen !== genRef.current) throw new SessionEndedError() // locked meanwhile: abort, nothing saved
+            await saveEnvelope(rotated.env, revOf(cur))
+            if (gen !== genRef.current) {
+              setEnvBoth(rotated.env) // the change is saved; keep the session closed
+              throw new SessionEndedError()
+            }
+            sessionRef.current = { gen, dek: rotated.dek }
+            setEnvBoth(rotated.env)
+            setLastSavedAt(rotated.env.updatedAt)
+            // Replay edits made during the rotation onto the re-keyed state. Sealed values they add come
+            // from seal(), which is queued behind this job and therefore already uses the new key.
+            let next = rotated.state
+            const held = heldUpdates.current
+            heldUpdates.current = []
+            for (const fn of held) next = fn(next)
+            stateRef.current = next
+            setState(next)
+            dirty.current = held.length > 0
+          } finally {
+            rotating.current = false
           }
-          await saveEnvelope(finalEnv, revOf(cur))
-          sessionRef.current = { gen, dek: rotated.dek }
-          stateRef.current = finalState
-          dirty.current = false
-          setState(finalState)
-          setEnvBoth(finalEnv)
-          setLastSavedAt(finalEnv.updatedAt)
         })
+        if (dirty.current) void flush()
       } catch (e) {
         if (e instanceof StaleVaultError) handleWriteError(e)
         throw e
@@ -344,16 +362,24 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 
   const importBackup = useCallback(
     async (text: string, passphrase: string) => {
+      const g0 = genRef.current
       const e = parseBackup(text)
       const { dek, state: s } = await openWithPassphrase(e, passphrase)
-      // End any current session first (its pending writes must not land on top of the restore).
-      genRef.current++
+      if (g0 !== genRef.current) throw new SessionEndedError()
+      // End any current session synchronously: its pending writes must not land on the restore,
+      // and no decrypted screen may stay up if the write below fails.
+      const g = ++genRef.current
       sessionRef.current = null
+      stateRef.current = null
       dirty.current = false
+      heldUpdates.current = []
       if (saveTimer.current) clearTimeout(saveTimer.current)
+      setState(null)
+      setStatus(envRef.current ? 'locked' : 'new')
       const stored = await enqueue(() => replaceEnvelope(e))
+      setEnvBoth(stored)
       channel.current?.postMessage({ type: 'replaced', from: TAB_ID })
-      await enter(genRef.current, dek, s, stored)
+      await enter(g, dek, s, stored) // rejects if a lock happened meanwhile
     },
     [enqueue, enter],
   )
@@ -363,10 +389,12 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     sessionRef.current = null
     stateRef.current = null
     dirty.current = false
+    heldUpdates.current = []
     if (saveTimer.current) clearTimeout(saveTimer.current)
+    setState(null)
+    setStatus(envRef.current ? 'locked' : 'new') // if the delete fails, the vault stays locked, not open
     await enqueue(() => deleteEnvelope())
     channel.current?.postMessage({ type: 'wiped', from: TAB_ID })
-    setState(null)
     setEnvBoth(null)
     setStatus('new')
   }, [enqueue])
@@ -403,6 +431,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       if (ev.data.type === 'unlocked' && sessionRef.current) lockRef.current('MyRM was opened in another tab or window, so it was locked here.')
       if (ev.data.type === 'replaced' || ev.data.type === 'wiped') {
         if (sessionRef.current) lockRef.current('This vault was restored or erased in another tab.', { skipSave: true })
+        else genRef.current++ // also cancel an unlock that is still in progress here
         setLoadTick((n) => n + 1)
       }
     }
@@ -436,6 +465,10 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         if (overdue()) lock() // timers may have been suspended while hidden
         else hiddenAt.current = null
       }
+    }
+    if (document.visibilityState === 'hidden') {
+      hiddenAt.current ??= Date.now()
+      hiddenTimer = setTimeout(() => lock(), Math.max(0, HIDDEN_LOCK_MS - (Date.now() - hiddenAt.current)))
     }
     const onPageShow = () => overdue() && lock()
     const onPageHide = () => void flush()

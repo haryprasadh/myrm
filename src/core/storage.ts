@@ -66,14 +66,17 @@ export function loadEnvelope(): Promise<Envelope | undefined> {
 export const revOf = (e: Envelope | undefined | null): number => (e ? (e.rev ?? 0) : -1)
 
 /**
- * Write `next` only if the stored envelope's rev equals `expectRev` (-1 = must not exist).
- * `next.rev` must be expectRev + 1. Throws StaleVaultError otherwise.
+ * Write `next` only if the stored envelope is the same vault (vid) at revision `expectRev`
+ * (-1 = must not exist), and `next.rev === expectRev + 1`. Throws StaleVaultError otherwise.
+ * The vault id stops a writer from an erased vault landing on a newly created one at the same rev.
  */
 export function saveEnvelope(next: Envelope, expectRev: number): Promise<void> {
+  if ((next.rev ?? 0) !== expectRev + 1 || !Number.isSafeInteger(next.rev ?? 0)) return Promise.reject(new StaleVaultError())
   return withStore<void>('readwrite', (s, done, fail) => {
     const req = s.get(KEY)
     req.onsuccess = () => {
-      if (revOf(req.result as Envelope | undefined) !== expectRev) return fail(new StaleVaultError())
+      const cur = req.result as Envelope | undefined
+      if (revOf(cur) !== expectRev || (cur && cur.vid !== next.vid)) return fail(new StaleVaultError())
       s.put(next, KEY).onsuccess = () => done(undefined)
     }
   })

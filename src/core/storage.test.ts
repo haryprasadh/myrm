@@ -35,4 +35,17 @@ describe('storage compare-and-swap (review #3/#4)', () => {
     expect(stored.rev).toBe(2)
     expect((await loadEnvelope())?.data.ct).toBe('dbackup')
   })
+
+  it('a writer from an erased vault cannot land on a new vault with the same rev (verify #3)', async () => {
+    await saveEnvelope({ ...env(0), vid: 'old' }, -1)
+    await deleteEnvelope() // erased in another tab
+    await saveEnvelope({ ...env(0, 'new'), vid: 'new' }, -1) // and a new vault created
+    await expect(saveEnvelope({ ...env(1, 'stale'), vid: 'old' }, 0)).rejects.toBeInstanceOf(StaleVaultError)
+    expect((await loadEnvelope())?.vid).toBe('new')
+  })
+
+  it('rejects writes whose rev is not exactly expectRev + 1', async () => {
+    await saveEnvelope(env(0), -1)
+    await expect(saveEnvelope(env(5), 0)).rejects.toBeInstanceOf(StaleVaultError)
+  })
 })

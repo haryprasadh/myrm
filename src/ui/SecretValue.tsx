@@ -20,6 +20,7 @@ export function SecretValue({ value, label }: { value: Sealed; label: string }) 
       setRemaining(0)
       setBusy(false)
     }
+    mask() // a new value (e.g. an edited card number) must never show the previous plaintext
     const hidden = () => { if (document.hidden) mask() }
     document.addEventListener('visibilitychange', hidden)
     window.addEventListener('pagehide', mask)
