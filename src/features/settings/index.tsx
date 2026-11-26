@@ -123,7 +123,16 @@ function PasskeyBlock() {
           {passkeys.length ? 'Add another device' : 'Turn on'}
         </Button>
       )}
-      <Sheet open={open} onClose={() => setOpen(false)} title="Turn on Face ID / fingerprint">
+      <Sheet
+        open={open}
+        onClose={() => {
+          if (busy) return
+          setOpen(false)
+          setPw('')
+          setErr('')
+        }}
+        title="Turn on Face ID / fingerprint"
+      >
         <form
           className="space-y-4"
           onSubmit={async (e) => {
@@ -178,6 +187,7 @@ function ChangePassphrase() {
   const [busy, setBusy] = useState(false)
   const s = passphraseStrength(pw)
   const close = () => {
+    if (busy) return
     setOpen(false)
     setOld('')
     setPw('')
@@ -202,7 +212,11 @@ function ChangePassphrase() {
             try {
               await changePassphrase(oldPw, pw)
               setDone(true)
-              close()
+              setBusy(false)
+              setOpen(false)
+              setOld('')
+              setPw('')
+              setPw2('')
             } catch (x) {
               setErr(x instanceof WrongPasswordError ? 'Current passphrase is wrong.' : (x as Error).message)
             } finally {
@@ -220,7 +234,10 @@ function ChangePassphrase() {
           <Field label="Repeat new passphrase" error={pw2 && pw2 !== pw ? "Doesn't match." : undefined}>
             <Input type="password" autoComplete="new-password" value={pw2} onChange={(e) => setPw2(e.target.value)} />
           </Field>
-          <Callout tone="warn">Old backup files still open with the old passphrase. Export a new backup after changing it.</Callout>
+          <Callout tone="warn">
+            This also replaces your encryption key and turns off Face ID / fingerprint unlock (turn it on again afterwards). Old backup files still
+            open with the old passphrase, so export a new backup and delete the old ones.
+          </Callout>
           <Button variant="primary" size="lg" disabled={!oldPw || !s.ok || pw !== pw2 || busy}>
             {busy ? 'Changing…' : 'Change passphrase'}
           </Button>
@@ -283,8 +300,16 @@ function RestoreSheet({ open, onClose, onRestore }: { open: boolean; onClose: ()
   const [confirm, setConfirm] = useState(false)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
+  const close = () => {
+    if (busy) return
+    setText('')
+    setPw('')
+    setConfirm(false)
+    setErr('')
+    onClose()
+  }
   return (
-    <Sheet open={open} onClose={onClose} title="Restore from backup">
+    <Sheet open={open} onClose={close} title="Restore from backup">
       <div className="space-y-4">
         <Callout tone="danger">Restoring replaces everything currently on this device with the backup's contents.</Callout>
         <Field label="Backup file">
@@ -306,6 +331,9 @@ function RestoreSheet({ open, onClose, onRestore }: { open: boolean; onClose: ()
             setErr('')
             try {
               await onRestore(text, pw)
+              setPw('')
+              setText('')
+              setConfirm(false)
               onClose()
             } catch (x) {
               setErr(x instanceof WrongPasswordError ? 'Wrong passphrase for this backup.' : (x as Error).message)
@@ -327,9 +355,9 @@ function AboutBlock() {
       <ul className="space-y-2">
         <li>🔐 Everything you enter is encrypted with AES-256-GCM. The key comes from your passphrase via Argon2id (64 MiB) or from a device passkey.</li>
         <li>🔁 PINs, passwords and card numbers are encrypted a second time and decrypted only when you tap Reveal or Copy.</li>
-        <li>📵 No servers, accounts, analytics or trackers. The app's security policy blocks network requests to any other site, so your data can't be uploaded.</li>
+        <li>📵 No servers, accounts, analytics or trackers. MyRM makes no network requests, and its security policy blocks background requests to other sites.</li>
         <li>🧾 MyRM never asks for OTPs or CVVs. Anyone who does is a fraudster.</li>
-        <li>🧑‍💻 Open source: anyone can check the code.</li>
+        <li>🧑‍💻 Open source: anyone can check the code. Like any app, it is only as trustworthy as the code you run; each release publishes file hashes so you can confirm the live site matches the public code.</li>
       </ul>
       <a className="inline-block text-accent underline" href={REPO_URL} target="_blank" rel="noopener noreferrer">
         View the source code

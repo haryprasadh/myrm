@@ -75,9 +75,25 @@ export function newKdfParams(): KdfParams {
   return { ...DEFAULT_KDF, salt: toB64(randomBytes(16)) }
 }
 
+/** Bounds for KDF params read from disk/backups (unauthenticated): stops "t = 1e9" style freezes. */
+export const KDF_BOUNDS = { mMin: 8192, mMax: 262144, tMin: 1, tMax: 10, pMin: 1, pMax: 4 } as const
+
+export function isValidKdf(kdf: unknown): kdf is KdfParams {
+  const k = kdf as KdfParams
+  if (!k || k.alg !== 'argon2id' || typeof k.salt !== 'string') return false
+  const int = (n: unknown, lo: number, hi: number) => Number.isInteger(n) && (n as number) >= lo && (n as number) <= hi
+  if (!int(k.m, KDF_BOUNDS.mMin, KDF_BOUNDS.mMax) || !int(k.t, KDF_BOUNDS.tMin, KDF_BOUNDS.tMax) || !int(k.p, KDF_BOUNDS.pMin, KDF_BOUNDS.pMax))
+    return false
+  try {
+    return fromB64(k.salt).length >= 16 && fromB64(k.salt).length <= 64
+  } catch {
+    return false
+  }
+}
+
 /** Derive the passphrase key-encryption key. Slow on purpose (~0.5–2 s). */
 export async function derivePasswordKek(passphrase: string, kdf: KdfParams): Promise<CryptoKey> {
-  if (kdf.alg !== 'argon2id') throw new Error(`Unsupported KDF ${kdf.alg}`)
+  if (!isValidKdf(kdf)) throw new Error('Unsupported or unsafe key-derivation settings in this vault file.')
   const raw = await argon2id({
     password: passphrase.normalize('NFKC'),
     salt: fromB64(kdf.salt),
@@ -181,16 +197,20 @@ export interface Strength {
   feedback: string
 }
 
-export function passphraseStrength(pw: string): Strength {
+export function passphraseStrength(raw: string): Strength {
+  // Score exactly what the KDF will see (NFKC), so look-alike characters can't inflate the score.
+  const pw = raw.normalize('NFKC')
   const len = [...pw].length
   if (len === 0) return { score: 0, ok: false, feedback: 'Choose a passphrase.' }
   const lower = pw.toLowerCase()
+  const compact = lower.replace(/[\s\-_.]+/g, '')
   if (COMMON.some((w) => lower.includes(w)) && len < 20)
     return { score: 0, ok: false, feedback: 'Avoid common words like "password" or "hdfc".' }
-  if (/^(.)\1+$/.test(pw) || /^(0123456789|1234567890|abcdefghij)/.test(lower))
-    return { score: 0, ok: false, feedback: 'Avoid repeated or sequential characters.' }
+  if (/^(.+?)\1+$/.test(compact) || /^(0123456789|1234567890|abcdefghij)/.test(compact))
+    return { score: 0, ok: false, feedback: 'Avoid repeated words, characters or sequences.' }
   const classes = [/[a-z]/, /[A-Z]/, /\d/, /[^A-Za-z0-9]/].filter((r) => r.test(pw)).length
-  const words = pw.trim().split(/[\s\-_.]+/).filter((w) => w.length >= 3).length
+  // Only distinct words count: "mango mango mango mango" is one word repeated.
+  const words = new Set(lower.trim().split(/[\s\-_.]+/).filter((w) => w.length >= 3)).size
   let score: Strength['score'] = 0
   if (len >= 10) score = 1
   if (len >= 12 && (classes >= 2 || words >= 3)) score = 2

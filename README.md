@@ -21,8 +21,9 @@ One place for your HDFC cards, PINs, due dates, loans, FDs and spending. Everyth
 
 - **Encryption:** all data is encrypted with AES-256-GCM. The key is random, and it is wrapped by your passphrase (via Argon2id, 64 MiB) or by a device passkey (Face ID or fingerprint, via WebAuthn PRF).
 - **Secrets encrypted twice:** PINs, passwords and card numbers are encrypted a second time. They are decrypted only when you tap Reveal or Copy, then re-hidden after 10 s. Copied secrets are cleared from the clipboard afterwards.
-- **No network access:** the Content-Security-Policy is `connect-src 'self'`, so the app cannot send data to any other site. There is no analytics and nothing is loaded from a third party.
-- **Auto-lock:** the app locks after a period of inactivity and 1 minute after you switch away.
+- **No network requests:** MyRM makes none, and its Content-Security-Policy (`connect-src 'self'`) blocks background requests to other sites. There is no analytics and nothing is loaded from a third party. Like any web app, it is only as safe as the code you run, so check the published hashes (below) or run your own copy.
+- **Auto-lock:** the app locks after a period of inactivity and 1 minute after you switch away. Only one tab can be unlocked at a time.
+- **Passphrase change rotates the key:** the data key is replaced and every secret re-encrypted, so old copies of the vault can't read anything saved afterwards.
 - **Never collected:** OTPs and CVVs. Anyone asking you for them is a fraudster.
 - **Verifiable deploys:** every deploy publishes `SHA256SUMS.txt`, so you can check that the live files match the CI build of this code.
 

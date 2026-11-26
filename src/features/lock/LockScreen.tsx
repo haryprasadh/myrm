@@ -12,14 +12,32 @@ function Logo() {
 }
 
 export default function LockScreen() {
-  const { status } = useVault()
+  const { status, notice, retry } = useVault()
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-bg px-4 py-10">
       <div className="w-full max-w-sm">
         <Logo />
         <h1 className="text-center text-2xl font-semibold text-ink">MyRM</h1>
         <p className="mb-6 text-center text-sm text-muted">Your cards, PINs, dues and money, in one private place.</p>
-        {status === 'new' ? <Onboard /> : <Unlock />}
+        {notice && (
+          <div className="mb-4">
+            <Callout tone="warn">{notice}</Callout>
+          </div>
+        )}
+        {status === 'error' ? (
+          <Panel className="space-y-3">
+            <Callout tone="danger">
+              MyRM couldn't read this browser's storage. Your data has not been changed. Close other MyRM tabs and try again.
+            </Callout>
+            <Button variant="primary" size="lg" onClick={retry}>
+              Try again
+            </Button>
+          </Panel>
+        ) : status === 'new' ? (
+          <Onboard />
+        ) : (
+          <Unlock />
+        )}
         <div className="mt-6 text-center">
           <a href="#/help" className="text-sm font-medium text-danger">
             Lost your card? Get help now →
@@ -35,20 +53,20 @@ export default function LockScreen() {
 }
 
 function Unlock() {
-  const { unlockWithPassphrase, unlockWithPasskey, passkeys } = useVault()
+  const { unlockWithPassphrase, unlockWithPasskey, passkeys, autoPasskey } = useVault()
   const [pw, setPw] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [restore, setRestore] = useState(false)
   const tried = useRef(false)
 
-  // Offer Face ID / fingerprint straight away if set up.
+  // Offer Face ID / fingerprint straight away, but only on a fresh app start (not right after "Lock now").
   useEffect(() => {
-    if (passkeys.length && !tried.current) {
+    if (autoPasskey && passkeys.length && !tried.current) {
       tried.current = true
       void unlockWithPasskey().catch(() => undefined)
     }
-  }, [passkeys.length, unlockWithPasskey])
+  }, [autoPasskey, passkeys.length, unlockWithPasskey])
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
@@ -94,6 +112,7 @@ function Onboard() {
   const [pw2, setPw2] = useState('')
   const [ack, setAck] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
   const [restore, setRestore] = useState(false)
   const s = passphraseStrength(pw)
 
@@ -102,7 +121,7 @@ function Onboard() {
       <Panel className="space-y-4">
         <ul className="space-y-3 text-sm text-ink">
           <li>🔐 <b>Encrypted on your device.</b> PINs, passwords and card details are locked with AES-256 and a passphrase only you know.</li>
-          <li>📵 <b>No servers, no tracking.</b> The app cannot send your data anywhere, and it works offline.</li>
+          <li>📵 <b>No servers, no tracking.</b> MyRM makes no network requests and works offline.</li>
           <li>📅 <b>Never miss a due date.</b> Card bills, EMIs and FD maturities in one place, exportable to your calendar.</li>
           <li>💳 <b>Use the right card.</b> Rewards, fee waivers and caps for HDFC cards.</li>
         </ul>
@@ -123,8 +142,11 @@ function Onboard() {
         onSubmit={async (e) => {
           e.preventDefault()
           setBusy(true)
+          setErr('')
           try {
             await create(pw)
+          } catch (x) {
+            setErr((x as Error).name === 'StaleVaultError' ? 'A vault already exists on this device. Reload to unlock it.' : (x as Error).message)
           } finally {
             setBusy(false)
           }
@@ -145,6 +167,7 @@ function Onboard() {
           <input type="checkbox" className="mt-1" checked={ack} onChange={(e) => setAck(e.target.checked)} />
           I understand my passphrase cannot be recovered.
         </label>
+        {err && <Callout tone="danger">{err}</Callout>}
         <Button variant="primary" size="lg" disabled={!s.ok || pw !== pw2 || !ack || busy}>
           {busy ? 'Creating vault…' : 'Create my vault'}
         </Button>
@@ -160,8 +183,16 @@ function RestoreSheet({ open, onClose }: { open: boolean; onClose: () => void })
   const [pw, setPw] = useState('')
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
+  const close = () => {
+    if (busy) return
+    setText('')
+    setName('')
+    setPw('')
+    setErr('')
+    onClose()
+  }
   return (
-    <Sheet open={open} onClose={onClose} title="Restore from backup">
+    <Sheet open={open} onClose={close} title="Restore from backup">
       <div className="space-y-4">
         <Callout tone="warn">Restoring replaces any vault on this device.</Callout>
         <Field label="Backup file" hint={name || 'A .json file exported from MyRM'}>
@@ -188,6 +219,8 @@ function RestoreSheet({ open, onClose }: { open: boolean; onClose: () => void })
             setErr('')
             try {
               await importBackup(text, pw)
+              setPw('')
+              setText('')
               onClose()
             } catch (x) {
               setErr(x instanceof WrongPasswordError ? 'Wrong passphrase for this backup.' : (x as Error).message)

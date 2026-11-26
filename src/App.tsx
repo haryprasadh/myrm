@@ -35,7 +35,7 @@ function useTheme(pref: 'system' | 'light' | 'dark' | undefined) {
 }
 
 export default function App() {
-  const { status, state } = useVault()
+  const { status, state, saveError } = useVault()
   const { segments } = useRoute()
   useTheme(state?.settings.theme)
 
@@ -56,7 +56,16 @@ export default function App() {
     route === 'settings' ? <Settings /> :
     route === 'more' ? <More /> :
     <Home />
-  return <Shell>{screen}</Shell>
+  return (
+    <Shell>
+      {saveError && (
+        <div role="alert" className="mx-auto max-w-3xl px-4 pt-3">
+          <div className="rounded-xl border border-danger/30 bg-danger/10 p-3 text-sm text-ink">{saveError}</div>
+        </div>
+      )}
+      {screen}
+    </Shell>
+  )
 }
 
 function Shell({ children, locked }: { children: ReactNode; locked?: boolean }) {
