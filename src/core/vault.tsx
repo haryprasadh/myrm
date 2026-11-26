@@ -15,6 +15,7 @@ import {
   addPasskeyWrap,
   changePassphraseRotate,
   createEnvelope,
+  migrateSealed,
   openWithPassphrase,
   openWithPrf,
   parseBackup,
@@ -75,6 +76,14 @@ class SessionEndedError extends Error {
   }
 }
 
+class KeyChangedError extends SessionEndedError {
+  constructor() {
+    super()
+    this.message = 'The passphrase was changed before this edit could be saved.'
+    this.name = 'KeyChangedError'
+  }
+}
+
 interface Session {
   gen: number
   dek: CryptoKey
@@ -104,6 +113,10 @@ export function VaultProvider({ children }: { children: ReactNode }) {
   /** While the data key rotates, edits are held here and applied to the re-keyed state afterwards. */
   const rotating = useRef(false)
   const heldUpdates = useRef<((s: AppState) => AppState)[]>([])
+  /** Bumped when a new data key is committed; snapshots taken under an older key are never written. */
+  const keyEpoch = useRef(0)
+  /** Set while an erase is in progress: unlocking is refused until it finishes. */
+  const destructive = useRef(false)
 
   const setEnvBoth = (e: Envelope | null) => {
     envRef.current = e
@@ -136,10 +149,11 @@ export function VaultProvider({ children }: { children: ReactNode }) {
   // ---- saving --------------------------------------------------------------------------------
   /** Persist a captured snapshot (used both while unlocked and right after lock). */
   const persistSnapshot = useCallback(
-    (snap: { dek: CryptoKey; state: AppState }) =>
+    (snap: { dek: CryptoKey; state: AppState; epoch: number }) =>
       enqueue(async () => {
         const cur = envRef.current
         if (!cur) return
+        if (snap.epoch !== keyEpoch.current) throw new KeyChangedError() // never write old-key data under new wrappers
         const next = await writeState(cur, snap.dek, snap.state)
         await saveEnvelope(next, revOf(cur))
         setEnvBoth(next)
@@ -168,7 +182,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     const s = stateRef.current
     if (rotating.current || !dirty.current || !sess || !s) return queue.current.then(() => undefined)
     dirty.current = false
-    return persistSnapshot({ dek: sess.dek, state: s }).catch((e) => {
+    return persistSnapshot({ dek: sess.dek, state: s, epoch: keyEpoch.current }).catch((e) => {
       if (sessionRef.current?.gen === sess.gen) dirty.current = true // keep it dirty for the next attempt
       handleWriteError(e)
     })
@@ -214,8 +228,15 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 
   const lock = useCallback((msg?: string, opts: { skipSave?: boolean } = {}) => {
     const sess = sessionRef.current
-    const s = stateRef.current
-    const wasDirty = dirty.current
+    let s = stateRef.current
+    let wasDirty = dirty.current
+    // Edits held during a key rotation belong to the old-key state; keep them in the lock-time save.
+    // If the rotation commits first, the epoch check drops this snapshot instead of corrupting the vault.
+    if (s && heldUpdates.current.length) {
+      for (const fn of heldUpdates.current) s = fn(s)
+      wasDirty = true
+    }
+    const epoch = keyEpoch.current
     // 1) take effect immediately
     genRef.current++
     sessionRef.current = null
@@ -230,8 +251,9 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     if (msg) setNotice(msg)
     // 2) flush the captured snapshot in the background
     if (sess && s && wasDirty && !opts.skipSave)
-      void persistSnapshot({ dek: sess.dek, state: s }).catch((e) => {
-        if (e instanceof StaleVaultError) setNotice('Your last change was not saved because MyRM was changed in another tab.')
+      void persistSnapshot({ dek: sess.dek, state: s, epoch }).catch((e) => {
+        if (e instanceof KeyChangedError) setNotice('Your last change was not saved because the passphrase was changed at the same moment.')
+        else if (e instanceof StaleVaultError) setNotice('Your last change was not saved because MyRM was changed in another tab.')
         else setNotice(`Your last change could not be saved: ${(e as Error)?.message ?? 'storage error'}`)
       })
   }, [persistSnapshot])
@@ -239,6 +261,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 
   /** Always unlock against the freshest envelope on disk (another tab may have changed it). */
   const freshEnv = useCallback(async (): Promise<Envelope> => {
+    if (destructive.current) throw new Error('Please wait: MyRM is erasing data on this device.')
     const e = await loadEnvelope()
     if (!e) {
       setEnvBoth(null)
@@ -248,6 +271,20 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     setEnvBoth(e)
     return e
   }, [])
+
+  /** Vaults created before vault ids existed get one on their first unlock (atomic CAS write). */
+  const ensureVid = useCallback(
+    (e: Envelope): Promise<Envelope> =>
+      e.vid
+        ? Promise.resolve(e)
+        : enqueue(async () => {
+            const withId: Envelope = { ...e, vid: crypto.randomUUID(), rev: revOf(e) + 1, updatedAt: new Date().toISOString() }
+            await saveEnvelope(withId, revOf(e))
+            setEnvBoth(withId)
+            return withId
+          }),
+    [enqueue],
+  )
 
   const create = useCallback(
     async (passphrase: string) => {
@@ -264,9 +301,10 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       const gen = genRef.current
       const e = await freshEnv()
       const { dek, state: s } = await openWithPassphrase(e, passphrase)
-      await enter(gen, dek, s, e)
+      if (destructive.current || gen !== genRef.current) throw new SessionEndedError()
+      await enter(gen, dek, s, await ensureVid(e))
     },
-    [enter, freshEnv],
+    [enter, freshEnv, ensureVid],
   )
 
   const unlockWithPasskey = useCallback(async () => {
@@ -274,9 +312,11 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     const e = await freshEnv()
     if (e.keys.passkeys.length === 0) throw new Error('No passkey set up for this vault.')
     const { credId, prfOutput } = await assertPrf(e.keys.passkeys)
-    const { dek, state: s } = await openWithPrf(await freshEnv(), credId, prfOutput)
-    await enter(gen, dek, s, envRef.current!)
-  }, [enter, freshEnv])
+    const latest = await freshEnv()
+    const { dek, state: s } = await openWithPrf(latest, credId, prfOutput)
+    if (destructive.current || gen !== genRef.current) throw new SessionEndedError()
+    await enter(gen, dek, s, await ensureVid(latest))
+  }, [enter, freshEnv, ensureVid])
 
   /** Run an envelope mutation against the CURRENT envelope inside the queue, with CAS. */
   const mutateEnv = useCallback(
@@ -321,28 +361,46 @@ export function VaultProvider({ children }: { children: ReactNode }) {
           const start = stateRef.current
           if (gen !== genRef.current || !sess || !cur || !start) throw new SessionEndedError()
           rotating.current = true // from here no snapshot of old-key state can be captured or saved
+          const wasDirty = dirty.current
+          dirty.current = false // `start` already contains any unsaved edits; the rotation saves them
+          let committed = false
           try {
             const rotated = await changePassphraseRotate(cur, start, oldPass, newPass)
             if (gen !== genRef.current) throw new SessionEndedError() // locked meanwhile: abort, nothing saved
             await saveEnvelope(rotated.env, revOf(cur))
-            if (gen !== genRef.current) {
-              setEnvBoth(rotated.env) // the change is saved; keep the session closed
-              throw new SessionEndedError()
-            }
-            sessionRef.current = { gen, dek: rotated.dek }
+            keyEpoch.current++
+            committed = true
             setEnvBoth(rotated.env)
             setLastSavedAt(rotated.env.updatedAt)
-            // Replay edits made during the rotation onto the re-keyed state. Sealed values they add come
-            // from seal(), which is queued behind this job and therefore already uses the new key.
+            if (gen !== genRef.current) throw new SessionEndedError() // saved, but keep the session closed
+            sessionRef.current = { gen, dek: rotated.dek }
+            stateRef.current = rotated.state // new key + re-keyed state become current together (no await between)
+            // Replay edits held during the rotation, then re-key any Sealed value they carried over from
+            // the old state (an editor may have captured an existing card number before the rotation).
             let next = rotated.state
-            const held = heldUpdates.current
-            heldUpdates.current = []
-            for (const fn of held) next = fn(next)
+            let replayed = 0
+            while (heldUpdates.current.length) {
+              const held = heldUpdates.current
+              heldUpdates.current = []
+              for (const fn of held) next = fn(next)
+              replayed += held.length
+              next = await migrateSealed(next, sess.dek, rotated.dek)
+            }
             stateRef.current = next
             setState(next)
-            dirty.current = held.length > 0
+            dirty.current = replayed > 0
           } finally {
             rotating.current = false
+            if (!committed && sessionRef.current?.gen === gen && stateRef.current) {
+              // Rotation failed (e.g. wrong current passphrase): keep the edits on the unchanged old-key state.
+              let n = stateRef.current
+              const held = heldUpdates.current
+              heldUpdates.current = []
+              for (const fn of held) n = fn(n)
+              stateRef.current = n
+              setState(n)
+              dirty.current = wasDirty || held.length > 0
+            }
           }
         })
         if (dirty.current) void flush()
@@ -385,6 +443,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
   )
 
   const wipe = useCallback(async () => {
+    destructive.current = true
     genRef.current++
     sessionRef.current = null
     stateRef.current = null
@@ -393,7 +452,12 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     if (saveTimer.current) clearTimeout(saveTimer.current)
     setState(null)
     setStatus(envRef.current ? 'locked' : 'new') // if the delete fails, the vault stays locked, not open
-    await enqueue(() => deleteEnvelope())
+    try {
+      await enqueue(() => deleteEnvelope())
+    } finally {
+      genRef.current++ // invalidate anything that started during the erase
+      destructive.current = false
+    }
     channel.current?.postMessage({ type: 'wiped', from: TAB_ID })
     setEnvBoth(null)
     setStatus('new')

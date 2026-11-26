@@ -122,4 +122,57 @@ describe('VaultProvider (security review regressions)', () => {
     const env = await storage.loadEnvelope()
     expect((await openWithPassphrase(env!, PASS)).state.version).toBe(1)
   })
+
+  it('a replayed edit that carries an old-key secret is re-keyed after rotation (verify3 replay)', async () => {
+    await setup()
+    let sealed!: Awaited<ReturnType<VaultApi['seal']>>
+    await act(async () => {
+      sealed = await api.seal('5555444433332222')
+    })
+    act(() => api.update((s) => ({ ...s, cards: [{ id: 'k', nickname: 'Regalia', kind: 'credit', number: sealed }] })))
+    await wait(600)
+    const NEW = 'river cloud pencil mango lamp'
+    const oldNumber = sealed // an editor that captured the card's number before the rotation
+    let change!: Promise<void>
+    act(() => {
+      change = api.changePassphrase(PASS, NEW)
+    })
+    await wait(40)
+    act(() => api.update((s) => ({ ...s, cards: s.cards.map((c) => ({ ...c, nickname: 'Regalia Gold', number: oldNumber })) })))
+    await act(() => change)
+    await wait(700)
+    const opened = await openWithPassphrase((await storage.loadEnvelope())!, NEW)
+    expect(opened.state.cards[0].nickname).toBe('Regalia Gold')
+    expect(await unseal(opened.dek, opened.state.cards[0].number!)).toBe('5555444433332222')
+  })
+
+  it('a wrong current passphrase keeps edits made meanwhile (verify3 held edits)', async () => {
+    await setup()
+    let change!: Promise<void>
+    act(() => {
+      change = api.changePassphrase('not the passphrase at all', 'river cloud pencil mango lamp')
+    })
+    await wait(40)
+    act(() => api.update((s) => ({ ...s, profile: { name: 'kept' } })))
+    await act(async () => {
+      await expect(change).rejects.toBeTruthy()
+    })
+    await wait(700)
+    expect(api.state?.profile.name).toBe('kept')
+    expect((await openWithPassphrase((await storage.loadEnvelope())!, PASS)).state.profile.name).toBe('kept')
+  })
+
+  it('unlock is refused while an erase is running (verify3 wipe)', async () => {
+    await setup()
+    let w!: Promise<void>
+    act(() => {
+      w = api.wipe()
+    })
+    await act(async () => {
+      await expect(api.unlockWithPassphrase(PASS)).rejects.toBeTruthy()
+      await w
+    })
+    expect(api.status).toBe('new')
+    expect(await storage.loadEnvelope()).toBeUndefined()
+  })
 })

@@ -188,8 +188,31 @@ async function rotateWith(
   }
 }
 
-/** Re-seal a state that changed while a rotation was running (all its Sealed values use oldDek). */
-export { resealState as resealLatest }
+/**
+ * After a key rotation: bring every Sealed value to the new key. Values already on the new key are
+ * kept; values still on the old key (e.g. captured by an edit queued during rotation) are re-sealed.
+ */
+export async function migrateSealed<T>(value: T, from: CryptoKey, to: CryptoKey): Promise<T> {
+  if (isSealed(value)) {
+    try {
+      await unseal(to, value)
+      return value
+    } catch {
+      try {
+        return (await seal(to, await unseal(from, value))) as T
+      } catch {
+        return value
+      }
+    }
+  }
+  if (Array.isArray(value)) return (await Promise.all(value.map((v) => migrateSealed(v, from, to)))) as T
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(value)) out[k] = await migrateSealed(v, from, to)
+    return out as T
+  }
+  return value
+}
 
 export const MAX_BACKUP_BYTES = 32 * 1024 * 1024
 

@@ -87,7 +87,8 @@ export function replaceEnvelope(env: Envelope): Promise<Envelope> {
   return withStore<Envelope>('readwrite', (s, done) => {
     const req = s.get(KEY)
     req.onsuccess = () => {
-      const stored = { ...env, rev: Math.max(revOf(req.result as Envelope | undefined), env.rev ?? 0) + 1 }
+      // A restored vault gets a fresh identity, so no writer from any earlier vault can match it.
+      const stored = { ...env, vid: crypto.randomUUID(), rev: Math.max(revOf(req.result as Envelope | undefined), env.rev ?? 0) + 1 }
       s.put(stored, KEY).onsuccess = () => done(stored)
     }
   })

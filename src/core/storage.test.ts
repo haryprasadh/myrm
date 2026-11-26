@@ -48,4 +48,11 @@ describe('storage compare-and-swap (review #3/#4)', () => {
     await saveEnvelope(env(0), -1)
     await expect(saveEnvelope(env(5), 0)).rejects.toBeInstanceOf(StaleVaultError)
   })
+
+  it('restore gives the vault a fresh id', async () => {
+    await saveEnvelope({ ...env(0), vid: 'a' }, -1)
+    const stored = await replaceEnvelope({ ...env(0, 'b'), vid: 'a' })
+    expect(stored.vid).not.toBe('a')
+    await expect(saveEnvelope({ ...env(1), vid: 'a' }, 0)).rejects.toBeInstanceOf(StaleVaultError)
+  })
 })
