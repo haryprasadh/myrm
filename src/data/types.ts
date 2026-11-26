@@ -26,6 +26,8 @@ export interface CatalogCard {
   kind: 'credit' | 'debit'
   networks: string[]
   tier: 'entry' | 'mid' | 'premium' | 'super-premium' | 'cobrand' | 'business'
+  /** 'open' = currently issued; 'invite_only'; 'legacy' = no longer issued but still in use. */
+  status: 'open' | 'invite_only' | 'legacy'
   fees: { joining: number | null; annual: number | null; waiverSpend: number | null }
   rewardUnit: 'RP' | 'CashPoints' | 'NeuCoins' | 'Cashback' | 'Miles' | 'Other'
   /** Base earning as % of spend at the best practical redemption value. */
@@ -109,4 +111,12 @@ export interface BankFacts {
   relationshipPrograms: RelationshipProgram[]
   statements: { accountPdfPassword: string; cardPdfPassword: string; delimitedColumns: string[]; alertSenders: string[] }
   fdRates: { asOf: string; source: string; rows: FdRateRow[] }
+}
+
+/** A dated bank rule change users should know about (devaluations, new caps, lounge rules). */
+export interface CardRuleChange {
+  date: string
+  cards: string[]
+  text: string
+  source: string
 }
