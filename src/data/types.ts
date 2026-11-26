@@ -58,6 +58,8 @@ export interface Helpline {
   label: string
   value: string
   kind: 'phone' | 'sms' | 'whatsapp' | 'email' | 'web'
+  /** For kind 'sms': the message body to send (placeholders in <angle brackets>). */
+  smsBody?: string
   note?: string
   source?: string
 }
@@ -75,6 +77,8 @@ export interface RelationshipProgram {
   name: string
   /** Each item is one way to qualify (any one is enough). */
   eligibility: { avgMonthlyBalance?: number; totalRelationshipValue?: number; netMonthlySalary?: number; note?: string }[]
+  /** Other qualifying routes we can't evaluate from the tracker inputs. */
+  otherWays?: string[]
   benefits: string[]
   source?: string
 }
@@ -92,8 +96,14 @@ export interface BankFacts {
   officialLinks: OfficialLink[]
   /** Domains that belong to the bank itself. Subdomains of these are official. */
   officialDomains: string[]
+  /** Older bank-controlled domains still in use (redirects, short links, email). Official, but legacy. */
+  legacyDomains: string[]
   /** HDFC group companies (not the bank). Official, but not banking. */
   groupDomains: string[]
+  /** Genuine SMS sender IDs (operator prefixes/suffixes like VM-...-S vary). */
+  smsSenderIds: string[]
+  /** How to recognise genuine bank contact, per the bank's own trust-markers page. */
+  trustMarkers: string[]
   helplines: Helpline[]
   howTo: HowTo[]
   relationshipPrograms: RelationshipProgram[]
