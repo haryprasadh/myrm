@@ -1,12 +1,13 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { daysBetween, formatDate, relativeDays, today } from '@/core/format'
 import { go, useRoute } from '@/core/router'
 import { newId, type UserCard } from '@/core/schema'
 import { useAppState, useVault } from '@/core/vault'
-import { CARD_CATALOG, catalogCard } from '@/data/cards'
+import { CARD_CATALOG, CARD_RULE_CHANGES, catalogCard } from '@/data/cards'
 import type { CatalogCard, SpendCategory } from '@/data/types'
 import { Badge, Button, Callout, Empty, Field, Input, Money, Page, Panel, Progress, Section, Select, Sheet, SourceNote, Toggle, cx } from '@/ui'
-import { bestPurchaseDay, cardYearRange, cardYearSpend, feeWaiverProgress, luhnValid, nextDueDate, nextStatementDate, rankCards, validateExpiry } from './logic'
+import { SecretValue } from '@/ui/SecretValue'
+import { bestPurchaseDay, cardYearRange, cardYearSpend, feeWaiverProgress, luhnValid, nextDueDate, nextStatementDate, rankCards, recentRuleChanges, validateExpiry } from './logic'
 
 const categories: { value: SpendCategory; label: string }[] = [
   ['general', 'Everyday'], ['online', 'Online shopping'], ['dining', 'Dining'], ['groceries', 'Groceries'], ['fuel', 'Fuel'], ['travel', 'Travel'], ['utilities', 'Utility bills'], ['rent', 'Rent'], ['insurance', 'Insurance'], ['education', 'Education'], ['wallet', 'Wallet loads'], ['government', 'Government payments'], ['smartbuy', 'SmartBuy'], ['swiggy', 'Swiggy'], ['tataneu', 'Tata Neu'], ['amazon', 'Amazon'], ['flipkart', 'Flipkart'], ['international', 'International'],
@@ -18,6 +19,9 @@ const numberValue = (value: string) => value.trim() === '' ? undefined : Number(
 const validMoney = (value: string) => value.trim() === '' || (Number.isFinite(Number(value)) && Number(value) >= 0)
 const gradient: Record<CatalogCard['tier'], string> = {
   entry: 'from-accent to-accent/70', mid: 'from-accent to-good', premium: 'from-ink to-accent', 'super-premium': 'from-ink to-warn', cobrand: 'from-accent to-warn', business: 'from-ink to-muted',
+}
+function CatalogWarnings({ card }: { card: CatalogCard }) {
+  return <>{card.status === 'invite_only' && <Badge tone="accent">Invite only</Badge>}{card.status === 'legacy' && <Badge tone="neutral">No longer issued</Badge>}{!!card.unverified?.length && <span className="text-xs text-warn" title={card.unverified.join(' · ')}>Some details unverified</span>}</>
 }
 
 export default function Cards() {
@@ -61,11 +65,18 @@ function CardForm({ card, onClose }: { card?: UserCard; onClose: () => void }) {
   const [feeWaiverSpend, setFeeWaiverSpend] = useState(card?.feeWaiverSpend?.toString() ?? '')
   const [manualYearSpend, setManualYearSpend] = useState(card?.manualYearSpend?.toString() ?? '')
   const [fullNumber, setFullNumber] = useState('')
+  const [showNumber, setShowNumber] = useState(false)
   const [removeNumber, setRemoveNumber] = useState(false)
   const [notes, setNotes] = useState(card?.notes ?? '')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  useEffect(() => {
+    const clear = () => { if (document.hidden) { setFullNumber(''); setShowNumber(false) } }
+    document.addEventListener('visibilitychange', clear)
+    return () => document.removeEventListener('visibilitychange', clear)
+  }, [])
+  const closeForm = () => { setFullNumber(''); setShowNumber(false); onClose() }
   const matches = CARD_CATALOG.filter(c => c.kind === kind && c.name.toLowerCase().includes(search.toLowerCase()))
   const chosen = catalogCard(catalogId)
   const save = async (event: FormEvent) => {
@@ -83,24 +94,24 @@ function CardForm({ card, onClose }: { card?: UserCard; onClose: () => void }) {
       const sealed = digits ? await seal(digits) : removeNumber ? undefined : card?.number
       const next: UserCard = { id: card?.id ?? newId(), kind, nickname: nickname.trim(), catalogId: chosen?.kind === kind ? catalogId : undefined, network: network ? network as UserCard['network'] : undefined, last4: digits ? digits.slice(-4) : last4 || undefined, number: sealed, expiry: expiry || undefined, creditLimit: numberValue(creditLimit), statementDay: numberValue(statementDay), dueDay: numberValue(dueDay), feeMonth: numberValue(feeMonth), feeWaiverSpend: numberValue(feeWaiverSpend), manualYearSpend: numberValue(manualYearSpend), notes: notes.trim() || undefined, linkedAccountId: card?.linkedAccountId }
       update(s => ({ ...s, cards: card ? s.cards.map(c => c.id === card.id ? next : c) : [...s.cards, next] }))
-      setFullNumber(''); onClose()
+      closeForm()
     } catch { setError('Could not save the card. Try again.') } finally { setBusy(false) }
   }
   const deleteCard = () => {
     if (!card || !confirmDelete) return
     update(s => ({ ...s, cards: s.cards.filter(c => c.id !== card.id) }))
-    onClose(); go('cards')
+    closeForm(); go('cards')
   }
-  return <Sheet open onClose={onClose} title={card ? 'Edit card' : 'Add card'}><form onSubmit={e => void save(e)} className="space-y-4">
+  return <Sheet open onClose={closeForm} title={card ? 'Edit card' : 'Add card'}><form onSubmit={e => void save(e)} className="space-y-4">
     <Field label="Card type"><Select value={kind} onChange={e => { setKind(e.target.value as UserCard['kind']); setCatalogId('') }} options={[{ value: 'credit', label: 'Credit' }, { value: 'debit', label: 'Debit' }]} /></Field>
-    <div><Field label="Find your card"><Input value={search} onChange={e => { setSearch(e.target.value); setCatalogId('') }} placeholder="Search the card list" /></Field><div className="mt-2 max-h-36 overflow-y-auto rounded-xl border border-line">{matches.map(c => <button type="button" key={c.id} onClick={() => { setCatalogId(c.id); setSearch(c.name) }} className={cx('block min-h-10 w-full px-3 py-2 text-left text-sm text-ink', catalogId === c.id ? 'bg-accent/15' : 'hover:bg-raised')}>{c.name}</button>)}<button type="button" onClick={() => { setCatalogId(''); setSearch('') }} className={cx('block min-h-10 w-full px-3 py-2 text-left text-sm text-ink', !catalogId && 'bg-accent/15')}>Other / not listed</button></div></div>
+    <div><Field label="Find your card"><Input value={search} onChange={e => { setSearch(e.target.value); setCatalogId('') }} placeholder="Search the card list" /></Field><div className="mt-2 max-h-36 overflow-y-auto rounded-xl border border-line">{matches.map(c => <button type="button" key={c.id} onClick={() => { setCatalogId(c.id); setSearch(c.name) }} className={cx('block min-h-10 w-full px-3 py-2 text-left text-sm text-ink', catalogId === c.id ? 'bg-accent/15' : 'hover:bg-raised')}>{c.name}<CatalogWarnings card={c} /></button>)}<button type="button" onClick={() => { setCatalogId(''); setSearch('') }} className={cx('block min-h-10 w-full px-3 py-2 text-left text-sm text-ink', !catalogId && 'bg-accent/15')}>Other / not listed</button></div></div>
     <Field label="Nickname"><Input value={nickname} onChange={e => setNickname(e.target.value)} placeholder="My daily card" required /></Field>
     <div className="grid grid-cols-2 gap-3"><Field label="Network"><Select value={network} onChange={e => setNetwork(e.target.value)} options={[{ value: '', label: 'Not set' }, ...networks.map(n => ({ value: n, label: n }))]} /></Field><Field label="Last 4 digits"><Input inputMode="numeric" maxLength={4} value={last4} onChange={e => setLast4(e.target.value)} placeholder="1234" /></Field></div>
     <div className="grid grid-cols-2 gap-3"><Field label="Expiry (MM/YY)"><Input value={expiry} onChange={e => setExpiry(e.target.value)} placeholder="08/28" inputMode="numeric" /></Field><Field label="Credit limit (₹)"><Input type="number" min="0" step="0.01" value={creditLimit} onChange={e => setCreditLimit(e.target.value)} /></Field></div>
     <div className="grid grid-cols-2 gap-3"><Field label="Statement day"><Select value={statementDay} onChange={e => setStatementDay(e.target.value)} options={dayOptions} /></Field><Field label="Payment due day"><Select value={dueDay} onChange={e => setDueDay(e.target.value)} options={dayOptions} /></Field></div>
     <Field label="Annual fee month"><Select value={feeMonth} onChange={e => setFeeMonth(e.target.value)} options={monthOptions} /></Field>
     <div className="grid grid-cols-2 gap-3"><Field label="Fee waiver spend (₹)" hint="Overrides catalog"><Input type="number" min="0" step="0.01" value={feeWaiverSpend} onChange={e => setFeeWaiverSpend(e.target.value)} /></Field><Field label="Manual spend this card year (₹)"><Input type="number" min="0" step="0.01" value={manualYearSpend} onChange={e => setManualYearSpend(e.target.value)} /></Field></div>
-    <Field label="Full card number (optional)" hint={card?.number ? 'Leave blank to keep the saved number.' : 'Encrypted separately in your vault.'}><Input type="text" inputMode="numeric" autoComplete="off" value={fullNumber} onChange={e => setFullNumber(e.target.value)} /></Field>
+    <div><Field label="Full card number (optional)" hint={card?.number ? 'Leave blank to keep the saved number.' : 'Encrypted separately in your vault.'}><Input type={showNumber ? 'text' : 'password'} inputMode="numeric" autoComplete="off" value={fullNumber} onChange={e => setFullNumber(e.target.value)} /></Field><Button type="button" variant="ghost" className="mt-1 min-h-10" onClick={() => setShowNumber(v => !v)}>{showNumber ? 'Hide' : 'Show'} card number</Button></div>
     {card?.number && <Toggle label="Remove saved full number" checked={removeNumber} onChange={setRemoveNumber} />}
     <Callout>MyRM never stores your CVV.</Callout>
     <Field label="Notes"><Input value={notes} onChange={e => setNotes(e.target.value)} placeholder="Optional" /></Field>
@@ -111,46 +122,22 @@ function CardForm({ card, onClose }: { card?: UserCard; onClose: () => void }) {
 }
 function Detail({ card, onEdit, editing, close }: { card: UserCard; onEdit: () => void; editing: UserCard | null | 'new'; close: () => void }) {
   const [state] = useAppState()
-  const { unseal } = useVault()
   const catalog = catalogCard(card.catalogId)
+  const changes = recentRuleChanges(CARD_RULE_CHANGES, card.catalogId)
   const current = today()
   const statement = card.kind === 'credit' && card.statementDay ? nextStatementDate(card.statementDay, current) : undefined
   const due = card.kind === 'credit' && card.dueDay ? nextDueDate(card.dueDay, current) : undefined
   const range = cardYearRange(card.feeMonth, current)
   const waiver = feeWaiverProgress(cardYearSpend(state.txns, card.id, range) + (card.manualYearSpend ?? 0), card.feeWaiverSpend ?? catalog?.fees.waiverSpend)
-  const [revealed, setRevealed] = useState<string | null>(null)
-  const [secretError, setSecretError] = useState('')
-  const maskTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  useEffect(() => () => { if (maskTimer.current) clearTimeout(maskTimer.current); if (copyTimer.current) clearTimeout(copyTimer.current) }, [])
-  const reveal = async () => {
-    if (!card.number) return
-    try {
-      const number = await unseal(card.number)
-      setRevealed(number)
-      if (maskTimer.current) clearTimeout(maskTimer.current)
-      maskTimer.current = setTimeout(() => setRevealed(null), 10_000)
-      setSecretError('')
-    } catch { setSecretError('Could not reveal the number.') }
-  }
-  const copy = async () => {
-    if (!card.number) return
-    try {
-      const number = await unseal(card.number)
-      await navigator.clipboard.writeText(number)
-      if (copyTimer.current) clearTimeout(copyTimer.current)
-      copyTimer.current = setTimeout(() => { void navigator.clipboard.readText().then(value => { if (value === number) return navigator.clipboard.writeText('') }).catch(() => undefined) }, Math.max(0, state.settings.clipboardClearSeconds) * 1000)
-      setSecretError('Copied. Clipboard will be cleared when possible.')
-    } catch { setSecretError('Could not copy the number.') }
-  }
   const dueDays = due ? daysBetween(current, due) : undefined
   return <Page title={card.nickname} subtitle={`${catalog?.name ?? 'Other card'} · ${card.kind} · ${card.network ?? catalog?.networks[0] ?? 'Network not set'}`} actions={<Button onClick={onEdit}>Edit</Button>}>
     <Button variant="ghost" onClick={() => go('cards')}>← All cards</Button>
-    <Panel><div className="flex flex-wrap items-center justify-between gap-2"><span className="text-lg font-semibold text-ink">{revealed ?? (card.last4 ? `•••• •••• •••• ${card.last4}` : 'Number not added')}</span>{card.number && <div className="flex gap-2"><Button onClick={() => void reveal()}>Reveal</Button><Button onClick={() => void copy()}>Copy</Button></div>}</div>{card.expiry && <p className="mt-2 text-sm text-muted">Expires {card.expiry}</p>}{secretError && <p role="status" className="mt-2 text-xs text-muted">{secretError}</p>}</Panel>
+    <Panel>{card.number ? <SecretValue key={card.id} value={card.number} label="card number" /> : <span className="text-lg font-semibold text-ink">{card.last4 ? `•••• •••• •••• ${card.last4}` : 'Number not added'}</span>}{card.expiry && <p className="mt-2 text-sm text-muted">Expires {card.expiry}</p>}</Panel>
     {card.kind === 'credit' && <Section title="Dates"><div className="grid gap-3 sm:grid-cols-2"><Panel><p className="text-sm text-muted">Next statement</p><p className="mt-1 text-xl font-semibold text-ink">{statement ? formatDate(statement, 'long') : 'Not set'}</p>{statement && <p className="text-sm text-muted">{relativeDays(statement)}</p>}</Panel><Panel><p className="text-sm text-muted">Next payment due</p><p className="mt-1 text-xl font-semibold text-ink">{due ? formatDate(due, 'long') : 'Not set'}</p>{due && <Badge tone={dueDays != null && dueDays <= 3 ? 'bad' : dueDays != null && dueDays <= 7 ? 'warn' : 'neutral'}>{relativeDays(due)}</Badge>}</Panel></div></Section>}
     {statement && <Callout>The day after your statement, {formatDate(bestPurchaseDay(statement))}, usually gives a big purchase the longest time before payment is due. Check your card statement for the actual interest-free period.</Callout>}
     {waiver && <Section title="Annual fee waiver"><Panel><div className="flex justify-between gap-2 text-sm text-ink"><span><Money value={waiver.spend} /> spent</span><span><Money value={waiver.threshold} /> goal</span></div><div className="mt-3"><Progress value={waiver.spend} max={waiver.threshold} tone={waiver.met ? 'good' : 'accent'} /></div><p className="mt-3 text-sm text-muted">{waiver.met ? 'Spend goal reached for this card year.' : <>Spend <Money value={waiver.remaining} /> more before {formatDate(range.end, 'long')}{catalog?.fees.annual != null ? <> to save <Money value={catalog.fees.annual} /></> : ' to reach the waiver goal'}.</>}</p><p className="mt-1 text-xs text-muted">Includes card debits and your manual spend. Card year: {formatDate(range.start, 'long')}–{formatDate(range.end, 'long')} (end exclusive).</p>{catalog && card.feeWaiverSpend == null && <SourceNote asOf={catalog.lastVerified} href={catalog.source} />}</Panel></Section>}
     {catalog && <Section title="Card benefits"><Panel className="space-y-3"><div className="grid grid-cols-2 gap-3 text-sm"><div><p className="text-muted">Base reward</p><p className="text-ink">{catalog.baseRatePct == null ? 'Not verified' : `${catalog.baseRatePct}%`}</p></div><div><p className="text-muted">Forex markup</p><p className="text-ink">{catalog.forexMarkupPct == null ? 'Not verified' : `${catalog.forexMarkupPct}%`}</p></div></div>{catalog.pointValueNote && <p className="text-sm text-muted">{catalog.pointValueNote}</p>}{(catalog.lounge.domestic || catalog.lounge.international) && <p className="text-sm text-ink">Lounge: {[catalog.lounge.domestic, catalog.lounge.international].filter(Boolean).join(' · ')}</p>}{catalog.caps.length > 0 && <BenefitList title="Caps" items={catalog.caps} />}{catalog.milestones.length > 0 && <BenefitList title="Milestones" items={catalog.milestones} />}{catalog.highlights.length > 0 && <BenefitList title="Highlights" items={catalog.highlights} />}{catalog.unverified && catalog.unverified.length > 0 && <Callout tone="warn">Unverified: {catalog.unverified.join(' · ')}</Callout>}<SourceNote asOf={catalog.lastVerified} href={catalog.source} /></Panel></Section>}
+    {changes.length > 0 && <Section title="Recent rule changes"><Panel><div className="space-y-3">{changes.map((change, i) => <div key={`${change.date}-${i}`} className="border-b border-line pb-3 last:border-0 last:pb-0"><p className="text-xs text-muted">{formatDate(change.date, 'long')}</p><p className="text-sm text-ink">{change.text}</p><SourceNote asOf={change.date} href={change.source} /></div>)}</div></Panel></Section>}
     {card.notes && <Section title="Notes"><Panel><p className="text-sm text-ink">{card.notes}</p></Panel></Section>}
     {editing && <CardForm key={card.id} card={card} onClose={close} />}
   </Page>
@@ -169,7 +156,7 @@ function Picker() {
   return <Page title="Which card should I use?" subtitle="Estimated rewards for one purchase">
     <Button variant="ghost" onClick={() => go('cards')}>← All cards</Button>
     <Panel className="space-y-4"><Field label="Spend category"><Select value={category} onChange={e => setCategory(e.target.value as SpendCategory)} options={categories} /></Field><Field label="Purchase amount (₹)"><Input type="number" min="1" step="0.01" value={amount} onChange={e => setAmount(e.target.value)} /></Field><Toggle checked={all} onChange={setAll} label="Compare all HDFC cards" /></Panel>
-    {!Number.isFinite(value) || value <= 0 ? <Callout tone="warn">Enter an amount above zero.</Callout> : ranking.length ? <Section title="Highest estimated reward first"><div className="space-y-3">{ranking.map((entry, index) => <Panel key={entry.card.id}><div className="flex items-start justify-between gap-3"><div><p className="font-semibold text-ink">{index + 1}. {entry.card.name}</p><p className="text-sm text-muted">{entry.ratePct}% effective reward · {entry.card.rewardUnit}</p></div><p className="shrink-0 text-lg font-semibold text-good"><Money value={entry.earned} paise /></p></div>{entry.caveats.length > 0 && <p className="mt-2 text-xs text-warn">{entry.caveats.join(' · ')}</p>}{entry.card.pointValueNote && <p className="mt-2 text-xs text-muted">{entry.card.pointValueNote}</p>}<SourceNote asOf={entry.card.lastVerified} href={entry.card.source} /></Panel>)}</div></Section> : <Empty title={CARD_CATALOG.length === 0 ? 'Card data is coming soon' : all ? 'No comparable cards' : 'No catalog cards in your wallet'} body={CARD_CATALOG.length === 0 ? 'You can still add and track your cards. Reward comparisons will appear when verified card data is available.' : 'Add a listed card, or compare all HDFC cards.'} />}
+    {!Number.isFinite(value) || value <= 0 ? <Callout tone="warn">Enter an amount above zero.</Callout> : ranking.length ? <Section title="Highest estimated reward first"><div className="space-y-3">{ranking.map((entry, index) => <Panel key={entry.card.id}><div className="flex items-start justify-between gap-3"><div><p className="font-semibold text-ink">{index + 1}. {entry.card.name}</p><div className="flex flex-wrap gap-2"><CatalogWarnings card={entry.card} /></div><p className="text-sm text-muted">{entry.ratePct}% effective reward · {entry.card.rewardUnit}</p></div><p className="shrink-0 text-lg font-semibold text-good"><Money value={entry.earned} paise /></p></div>{entry.caveats.length > 0 && <p className="mt-2 text-xs text-warn">{entry.caveats.join(' · ')}</p>}{entry.card.pointValueNote && <p className="mt-2 text-xs text-muted">{entry.card.pointValueNote}</p>}<SourceNote asOf={entry.card.lastVerified} href={entry.card.source} /></Panel>)}</div></Section> : <Empty title={CARD_CATALOG.length === 0 ? 'Card data is coming soon' : all ? 'No comparable cards' : 'No catalog cards in your wallet'} body={CARD_CATALOG.length === 0 ? 'You can still add and track your cards. Reward comparisons will appear when verified card data is available.' : 'Add a listed card, or compare all HDFC cards.'} />}
     <p className="text-xs text-muted">Estimates use published effective rates. Caps, exclusions and redemption terms may reduce actual rewards.</p>
   </Page>
 }

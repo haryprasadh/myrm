@@ -1,9 +1,21 @@
 import { describe, expect, it } from 'vitest'
 import type { Txn } from '@/core/schema'
 import type { CatalogCard } from '@/data/types'
-import { bestPurchaseDay, cardYearRange, cardYearSpend, feeWaiverProgress, luhnValid, nextDueDate, nextStatementDate, rankCards, validateExpiry } from './logic'
+import { bestPurchaseDay, cardYearRange, cardYearSpend, feeWaiverProgress, luhnValid, nextDueDate, nextStatementDate, rankCards, recentRuleChanges, validateExpiry } from './logic'
 
 const card = (id: string, rate: number | null): CatalogCard => ({ id, name: id, kind: 'credit', status: 'open', networks: ['Visa'], tier: 'mid', fees: { joining: 0, annual: 500, waiverSpend: 100000 }, rewardUnit: 'Cashback', baseRatePct: rate, categoryRatePct: {}, caps: [], pointValueNote: '', lounge: { domestic: null, international: null }, forexMarkupPct: null, milestones: [], highlights: [], lastVerified: '2026-01-01', source: 'https://example.com', unverified: [] })
+
+it('shows only matching card rule changes newest first', () => {
+  const changes = [
+    { date: '2025-01-01', cards: ['a'], text: 'Old', source: 'https://example.com/old' },
+    { date: '2026-02-01', cards: ['b'], text: 'Other', source: 'https://example.com/other' },
+    { date: '2026-01-01', cards: ['a', 'b'], text: 'New', source: 'https://example.com/new' },
+  ]
+  expect(recentRuleChanges(changes, 'a').map(c => c.text)).toEqual(['New', 'Old'])
+  expect(recentRuleChanges(changes, undefined)).toEqual([])
+  expect(recentRuleChanges(changes, 'missing')).toEqual([])
+  expect(changes[0].text).toBe('Old')
+})
 
 describe('card dates', () => {
   it('clamps month ends and handles leap years', () => {

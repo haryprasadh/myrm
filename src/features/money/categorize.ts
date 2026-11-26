@@ -24,7 +24,9 @@ const rules: [TxnCategory, RegExp][] = [
 export function merchantName(description: string): string {
   const upi = description.match(/\bUPI[-/ ]+(.+?)[-/ ]+[\w.\-]+@[\w.\-]+(?:[-/ ].*)?$/i)
   if (upi) return upi[1].replace(/[-_/]+/g, ' ').trim()
-  return description.replace(/^(UPI|NEFT|IMPS)[-/ ]+/i, '').replace(/\s+/g, ' ').trim()
+  const debit = description.match(/^(?:ACH|NACH)\s+D\s*[-/]?\s*(.+)$/i)
+  if (debit) return debit[1].replace(/[-/]\s*/g, ' ').replace(/\s+\d{5,}\s*$/, '').replace(/\bHDFC BANK LTD\b/i, 'HDFC Bank').replace(/\bHOME LOAN EMI\b/i, 'home loan EMI').replace(/\s+/g, ' ').trim()
+  return description.replace(/\s+/g, ' ').trim()
 }
 
 export function categorize(description: string, amount: number): TxnCategory {
