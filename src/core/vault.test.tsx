@@ -65,13 +65,13 @@ describe('VaultProvider (security review regressions)', () => {
   it('a late unlock that finishes after a lock does not reopen the vault (review #5)', async () => {
     await setup()
     act(() => api.lock())
-    let late!: Promise<void>
+    let late!: Promise<unknown>
     act(() => {
-      late = api.unlockWithPassphrase(PASS)
+      late = api.unlockWithPassphrase(PASS).catch((e: unknown) => e)
     })
     act(() => api.lock()) // user (or another tab) locks again while Argon2 runs
     await act(async () => {
-      await expect(late).rejects.toThrow(/locked/)
+      expect(String(await late)).toMatch(/locked/)
     })
     expect(api.status).toBe('locked')
   })
@@ -108,14 +108,14 @@ describe('VaultProvider (security review regressions)', () => {
 
   it('locking during a passphrase change keeps the vault locked and the old passphrase (verify #2)', async () => {
     await setup()
-    let change!: Promise<void>
+    let change!: Promise<unknown>
     act(() => {
-      change = api.changePassphrase(PASS, 'river cloud pencil mango lamp')
+      change = api.changePassphrase(PASS, 'river cloud pencil mango lamp').catch((e: unknown) => e)
     })
     await wait(40)
     act(() => api.lock())
     await act(async () => {
-      await expect(change).rejects.toThrow(/locked/)
+      expect(String(await change)).toMatch(/locked/)
     })
     expect(api.status).toBe('locked')
     expect(api.state).toBeNull()
@@ -148,14 +148,14 @@ describe('VaultProvider (security review regressions)', () => {
 
   it('a wrong current passphrase keeps edits made meanwhile (verify3 held edits)', async () => {
     await setup()
-    let change!: Promise<void>
+    let change!: Promise<unknown>
     act(() => {
-      change = api.changePassphrase('not the passphrase at all', 'river cloud pencil mango lamp')
+      change = api.changePassphrase('not the passphrase at all', 'river cloud pencil mango lamp').catch((e: unknown) => e)
     })
     await wait(40)
     act(() => api.update((s) => ({ ...s, profile: { name: 'kept' } })))
     await act(async () => {
-      await expect(change).rejects.toBeTruthy()
+      expect(await change).toBeInstanceOf(Error)
     })
     await wait(700)
     expect(api.state?.profile.name).toBe('kept')
@@ -169,7 +169,7 @@ describe('VaultProvider (security review regressions)', () => {
       w = api.wipe()
     })
     await act(async () => {
-      await expect(api.unlockWithPassphrase(PASS)).rejects.toBeTruthy()
+      expect(await api.unlockWithPassphrase(PASS).catch((e: unknown) => e)).toBeInstanceOf(Error)
       await w
     })
     expect(api.status).toBe('new')
