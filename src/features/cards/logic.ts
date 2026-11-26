@@ -1,5 +1,10 @@
 import type { Txn } from '@/core/schema'
-import type { CatalogCard, SpendCategory } from '@/data/types'
+import type { CardRuleChange, CatalogCard, SpendCategory } from '@/data/types'
+
+export function recentRuleChanges(changes: CardRuleChange[], catalogId?: string): CardRuleChange[] {
+  if (!catalogId) return []
+  return changes.filter(change => change.cards.includes(catalogId)).sort((a, b) => b.date.localeCompare(a.date))
+}
 
 export interface CardYearRange { start: string; end: string }
 

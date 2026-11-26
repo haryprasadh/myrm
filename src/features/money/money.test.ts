@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { Loan, Txn } from '@/core/schema'
 import { categorize, merchantName } from './categorize'
 import { uniqueTransactions } from './dedupe'
-import { parseCsvTable, detectHdfcMapping, parseMappedRows, parsePdfLines, parseDate, reconstructPdfLines } from './parsers'
+import { parseCsvTable, detectHdfcMapping, parseMappedRows, parsePdfLines, parseDate, reconstructPdfLines, statementKind } from './parsers'
 import { monthlyTotals, spendByCategory, topMerchants, lastSixMonths } from './aggregates'
 import { netWorth } from './networth'
 
@@ -40,6 +40,13 @@ describe('statement parsers', () => {
     expect(result.unparsed).toBe(1)
     expect(reconstructPdfLines([{ str: '100.00', transform: [1,0,0,1,200,600] },{ str: '01/01/2024', transform: [1,0,0,1,10,600] }])).toEqual(['01/01/2024 100.00'])
   })
+  it('classifies account statements and card statements before selecting an import target', () => {
+    expect(statementKind(['Date', 'Narration', 'Closing Balance'], null, [])).toBe('account')
+    expect(statementKind(['HDFC Bank Savings Account Statement'], null, [])).toBe('account')
+    expect(statementKind(['Date', 'Description'], null, [{ date: '2024-02-29', description: 'NEFT CR-HDFC BANK', amount: 100, category: 'transfers' }])).toBe('account')
+    expect(statementKind(['Date', 'Card Number', 'Description'], null, [])).toBe('card')
+    expect(statementKind([], null, [])).toBe('card')
+  })
 })
 
 describe('categorization and dedupe', () => {
@@ -48,6 +55,11 @@ describe('categorization and dedupe', () => {
     expect(categorize('SALARY', -100)).toBe('other')
     expect(categorize('NACH MF SIP', -100)).toBe('investments')
     expect(categorize('NEFT TO FRIEND', -100)).toBe('transfers')
+    expect(merchantName('NEFT CR-HDFC BANK')).toBe('NEFT CR-HDFC BANK')
+    expect(merchantName('IMPS TO FRIEND')).toBe('IMPS TO FRIEND')
+    expect(merchantName('RTGS CR-HDFC BANK')).toBe('RTGS CR-HDFC BANK')
+    expect(merchantName('ACH D- HDFC BANK LTD-HOME LOAN EMI 123456')).toBe('HDFC Bank home loan EMI')
+    expect(merchantName('NACH D- HDFC BANK LTD-HOME LOAN EMI 123456')).toBe('HDFC Bank home loan EMI')
   })
   it('dedupes inside the file and against existing data by source', () => {
     const first = txn('2024-01-01', '  SWIGGY   FOOD ', -100)

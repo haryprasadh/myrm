@@ -7,6 +7,14 @@ export type DateFormat = 'dmy' | 'mdy' | 'ymd'
 export interface ColumnMapping { date: number; description: number; debit?: number; credit?: number; amount?: number; drCr?: number; refNo?: number; balance?: number; dateFormat: DateFormat }
 export interface CsvTable { headers: string[]; rows: string[][]; headerIndex: number; hdfc: boolean }
 
+export function statementKind(headers: string[], mapping: ColumnMapping | null, transactions: ParsedTxn[]): 'account' | 'card' {
+  if (mapping?.balance !== undefined || headers.some(h => /(?:closing|running|available)?\s*balance|account\s*(?:no|number|statement)/i.test(h))) return 'account'
+  if (headers.some(h => /card\s*(?:no|number)|credit\s*card/i.test(h))) return 'card'
+  if (headers.some(h => /withdrawal|deposit\s*amount/i.test(h))) return 'account'
+  if (transactions.some(t => t.balance !== undefined || /^(?:NEFT|IMPS|RTGS|UPI|ACH|NACH)[\s\-/]/i.test(t.description))) return 'account'
+  return 'card'
+}
+
 function normalize(s: string) { return s.toLowerCase().replace(/[^a-z0-9]/g, '') }
 function find(headers: string[], patterns: RegExp[]) { return headers.findIndex(h => patterns.some(p => p.test(normalize(h)))) }
 
