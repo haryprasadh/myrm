@@ -1,0 +1,56 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --bg: #f5f7fa;
+  --surface: #ffffff;
+  --raised: #eef1f5;
+  --line: #dfe4ec;
+  --ink: #0f172a;
+  --muted: #5b6475;
+  --accent: #0f766e;
+  --good: #15803d;
+  --warn: #b45309;
+  --danger: #dc2626;
+  color-scheme: light;
+}
+
+.dark {
+  --bg: #0a0f1c;
+  --surface: #111827;
+  --raised: #1a2334;
+  --line: #263248;
+  --ink: #e7ebf3;
+  --muted: #94a0b6;
+  --accent: #2dd4bf;
+  --good: #4ade80;
+  --warn: #fbbf24;
+  --danger: #f87171;
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-raised: var(--raised);
+  --color-line: var(--line);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-good: var(--good);
+  --color-warn: var(--warn);
+  --color-danger: var(--danger);
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif;
+}
+
+html, body, #root { min-height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+.secret { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0.15em; }

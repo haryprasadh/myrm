@@ -1,0 +1,38 @@
+{
+  "name": "myrm",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "MyRM: a local-first, encrypted personal relationship manager for HDFC Bank customers. Unofficial; not affiliated with HDFC Bank.",
+  "license": "MIT",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "preview": "vite preview",
+    "check": "npm run typecheck && npm test && npm run build"
+  },
+  "dependencies": {
+    "hash-wasm": "^4.13.0",
+    "papaparse": "^5.7.1",
+    "pdfjs-dist": "^6.5.438",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.5",
+    "@testing-library/react": "^16.3.3",
+    "@types/papaparse": "^5.5.2",
+    "@types/react": "^19.3.3",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.3.0",
+    "fake-indexeddb": "^6.2.8",
+    "jsdom": "^31.0.1",
+    "tailwindcss": "^4.3.5",
+    "typescript": "^7.0.2",
+    "vite": "^8.4.0",
+    "vite-plugin-pwa": "^2.0.0",
+    "vitest": "^5.1.2"
+  }
+}
