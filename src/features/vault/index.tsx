@@ -5,7 +5,7 @@ import { HDFC } from '@/data/hdfc'
 import { Badge, Button, Empty, Field, Input, Page, Panel, Section, SourceNote } from '@/ui'
 import { ageBadge, groupCredentials, kindMeta } from './logic'
 import { CredentialEditor } from './CredentialEditor'
-import { SecretValue } from './SecretValue'
+import { SecretValue } from '@/ui/SecretValue'
 
 export default function Vault() {
   const [state] = useAppState()

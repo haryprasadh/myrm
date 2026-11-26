@@ -1,10 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Sealed } from '@/core/schema'
 import { useVault } from '@/core/vault'
-import { Button } from '@/ui'
-import { clipboardSeconds } from './logic'
-
-import { scheduleClipboardClear } from './clipboard'
+import { Button } from './index'
+import { clipboardSeconds, scheduleClipboardClear } from '@/core/clipboard'
 
 export function SecretValue({ value, label }: { value: Sealed; label: string }) {
   const { unseal, state } = useVault()

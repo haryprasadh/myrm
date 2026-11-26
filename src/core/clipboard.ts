@@ -13,3 +13,8 @@ async function clearClipboard(): Promise<void> {
     // Browser permission, background suspension or unavailable API: best effort.
   }
 }
+
+/** Sanitise the user's clipboard-clear setting (seconds). */
+export function clipboardSeconds(value: number): number {
+  return Number.isFinite(value) && value > 0 ? Math.min(2147483, Math.max(1, Math.floor(value))) : 20
+}

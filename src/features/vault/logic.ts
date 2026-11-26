@@ -53,6 +53,4 @@ export function ageBadge(updatedAt: string, now: Date = new Date()): { label: st
   return { label: days === 0 ? 'Changed today' : `Changed ${days} ${days === 1 ? 'day' : 'days'} ago`, tone: days > 365 ? 'warn' : 'neutral' }
 }
 
-export function clipboardSeconds(value: number): number {
-  return Number.isFinite(value) && value > 0 ? Math.min(2147483, Math.max(1, Math.floor(value))) : 20
-}
+export { clipboardSeconds } from '@/core/clipboard'
